@@ -1,0 +1,170 @@
+#!/usr/bin/env node
+
+'use strict';
+
+const chalk = require('chalk');
+const path = require('path');
+const fs = require('fs');
+
+// Config
+// ======
+
+const extensions = ['.js', '.mjs', '.jsx', '.tsx', '.ts', '.mts', '.mtsx'];
+const resolveExtensions = [...extensions, ...extensions.map(_ => '/index' + _)];
+const exclude = ['node_modules', 'plain-resources', 'vendor', 'dist'];
+const entryFiles = ['main.browser.ts'];
+const excludeSuffixes = ['.min.js'];
+
+// Constants
+// =========
+
+const regexes = [
+    /import '(?<file>[^']+)'/g,
+    /import "(?<file>[^"]+)"/g,
+    /from '(?<file>[^']+)'/g,
+    /from "(?<file>[^"]+)"/g,
+    /require\('(?<file>[^']+)'\)/g,
+    /require\("(?<file>[^"]+)"\)/g,
+];
+
+// Main
+// ====
+
+;(function main() {
+    const usedBy = new Map();
+    const used = new Set();
+
+    for (const f of scan('.')) {
+        const source = fs.readFileSync(f, 'utf8');
+        const imports = extractImportedFiles(f, source);
+        for (const importedFile of imports) {
+            used.add(importedFile);
+            if (!usedBy.has(importedFile)) {
+                usedBy.set(importedFile, new Set());
+            }
+            usedBy.get(importedFile).add(f);
+        }
+        /*
+        if (!imports.length && /^import/.test(source)) {
+            console.log('-'.repeat(15));
+            console.log(source);
+            console.log('-'.repeat(15));
+            //throw Error('Sanity check: Unexpected import string found');
+        }
+        */
+    }
+
+    for (const f of scan('.')) {
+        if (used.has(f)) continue;
+        if (entryFiles.some(f => entryFiles.includes(last(f.split('/'))))) continue;
+        console.error(chalk.red('Unused: ') + f);
+    }
+
+    /*
+    for (const [f, importers] of usedBy) {
+        console.log(chalk.cyan('-'.repeat(15)));
+        console.log(chalk.cyan(f));
+        console.log('Imported by:');
+        for (const importer of importers) {
+            console.log(importer);
+        }
+        console.log(chalk.cyan('-'.repeat(15)));
+    }
+    */
+})();
+
+// Utils
+// =====
+
+function last(array) {
+    return array[array.length - 1];
+}
+
+function extractImportedFiles(importer, source) {
+    const files = [];
+    for (const re of regexes) {
+        const matches = [...source.matchAll(re)];
+        if (!matches.length) {
+            continue;
+        }
+        for (const match of matches) {
+            const imported = match.groups.file;
+            if (!/^[./]/.test(imported)) {
+                continue;
+            }
+            const resolved = resolve(importer, imported);
+            if (!resolved) continue;
+            files.push(resolved);
+        }
+    }
+    return files;
+}
+
+function resolve(importer, imported) {
+    const absImported = path.resolve(importer, '..', imported);
+    for (const ext of ['', ...resolveExtensions]) {
+        if (isFile(absImported + ext)) {
+            return absImported + ext;
+        }
+    }
+    errorBox(
+        'Import not found: ' + imported,
+        'Source: ' + importer,
+        'Absolute import: ' + absImported
+    );
+    return null;
+}
+
+function isFile(absFile) {
+    try {
+        const stat = fs.statSync(absFile);
+        if (!stat.isFile()) {
+            return false;
+        }
+    } catch (e) {
+        return false;
+    }
+    return true;
+}
+
+function ls(dir) {
+    return fs
+        .readdirSync(dir)
+        .map(file => [path.resolve(dir, file), file])
+}
+
+function * scan(dir) {
+    for (const [fullName, lastName] of ls(dir)) {
+        if (excludeSuffixes.some(suffix => lastName.endsWith(suffix))) {
+            continue;
+        }
+        if (exclude.includes(lastName)) {
+            continue;
+        }
+        const stat = fs.statSync(fullName);
+        if (stat.isDirectory()) {
+            yield * scan(fullName);
+            continue;
+        }
+        if (!extensions.includes(extname(fullName))) {
+            continue;
+        }
+        yield fullName;
+    }
+}
+
+function errorBox(...strings) {
+    const maxLen = Math.max(...strings.map(str => str.length));
+    const padding = maxLen + 2
+    const line = () => console.error(chalk.red(' ' + '-'.repeat(padding)));
+
+    line();
+    for (const s of strings) {
+        console.error(chalk.red('| ') + s.padEnd(maxLen, ' ') + chalk.red(' |'));
+    }
+    line();
+}
+
+function extname(file) {
+    return file.slice(file.lastIndexOf('.'), file.length);
+}

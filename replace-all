@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const readline = require("readline");
+const chalk = require("chalk");
+const path = require("path");
+const Diff = require("diff");
+const fs = require("fs");
+
+const search = process.argv[2];
+const replacement = process.argv[3];
+const possiblyFileOrExtensions = process.argv[4];
+const possiblyFile = possiblyFileOrExtensions && possiblyFileOrExtensions[0] !== "." ? possiblyFileOrExtensions : null;
+const extensions = possiblyFileOrExtensions && possiblyFileOrExtensions[0] === "." ? possiblyFileOrExtensions.split(",") : null;
+const noQuestion = Boolean(possiblyFile);
+
+console.log(process.argv);
+console.log("Search: " + search);
+console.log("Replacement: " + replacement);
+if (possiblyFile) console.log("File: " + possiblyFile);
+
+if (!search || replacement == null) {
+    console.error("You must supply two arguments to replace-all. Example:\n\n    replace-all 'Hello (you|me)' 'Hello world'\n");
+    process.exit(1);
+}
+
+let changed = 0;
+const updates = new Map();
+
+const regex = new RegExp(search, 'g');
+
+console.log(regex);
+
+const files = possiblyFile ? [possiblyFile] : scan(".")
+
+for (const file of files) {
+    if (extensions && !extensions.includes(path.extname(file))) {
+        continue;
+    }
+    const input = fs.readFileSync(file, "utf8");
+    const output = input.replace(regex, replacement);
+    if (input !== output) {
+        console.log(file);
+        updates.set(file, { input, output });
+        changed += 1;
+        const diff = Diff.diffLines(input, output);
+        for (const line of diff) {
+            if (line.removed) {
+                console.log(chalk.red("- " + truncate(line.value)));
+            } else if (line.added) {
+                console.log(chalk.green("+ " + truncate(line.value)));
+            }
+        }
+    }
+}
+
+if (changed === 0) {
+    console.log("No files matched.");
+    process.exit(0);
+}
+
+if (noQuestion) {
+    doReplace();
+} else {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    const extensions = new Set();
+    for (const [file] of updates) {
+        extensions.add(path.extname(file));
+    }
+
+    console.log("Extensions: " + [...extensions].join(", "));
+
+    rl.question(changed + " files will be updated. Continue? [y|n]\n> ", (answer) => {
+        if (answer !== "y") {
+            console.error("Aborted. No files updated.");
+            process.exit(1);
+        }
+        console.log("Answer: " + answer);
+        doReplace();
+        console.log("Done");
+        rl.close();
+    });
+}
+
+function doReplace() {
+    for (const [file, { output }] of updates) {
+        fs.writeFileSync(file, output);
+    }
+}
+
+function * scan(dir) {
+    for (const file of ls(dir)) {
+        const stat = fs.statSync(file);
+        if (stat.isDirectory()) {
+            yield * scan(file);
+        } else {
+            yield file;
+        }
+    }
+}
+
+function ls(dir) {
+    return fs.readdirSync(dir)
+        .filter(file => {
+            return ![".lock", ".png", ".svg", ".editorconfig", ".git"].includes(path.extname(file))
+                && ![".git", ".editorconfig", "target", "node_modules", ".yarn", "package.json", "dist", "dest"].some(name => file === name)
+        })
+        .map(file => path.resolve(dir, file));
+}
+
+function truncate(string) {
+    if (string.length > 500) {
+        return string.slice(0, 500) + '...';
+    }
+
+    return string;
+}

@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+// @ts-check
+
+"use strict";
+
+const readline = require("readline");
+const chalk = require("chalk");
+const path = require("path");
+const fs = require("fs");
+
+const JSX_RE = /(<[a-zA-Z]|<>)/
+const AMBIGOUS_JSX_RE = /([a-zA-Z]<[a-zA-Z])|(['"]<\/?[a-z]+)/
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+});
+
+main();
+
+async function main() {
+    const moves = [];
+
+    for (const name of scan(".")) {
+        const extname = path.extname(name);
+        const source = fs.readFileSync(name, "utf8");
+        let newName = name;
+        if (extname === ".js" && await hasJsx(name)) {
+            newName = swapExt(name, ".jsx");
+        }
+        if (extname === ".ts" && await hasJsx(name)) {
+            newName = swapExt(name, ".tsx");
+        }
+        if (name !== newName) {
+            if (AMBIGOUS_JSX_RE.test(source)) {
+                console.log(chalk.bold("Found possibly ambigous JSX. Please review."))
+                console.log(chalk.cyan(name));
+                logJsxIn(source);
+                if (!await prompt("Include file")) {
+                    continue
+                }
+            }
+            console.log(chalk.red("- " + name));
+            console.log(chalk.green("- " + newName));
+            logJsxIn(source);
+            moves.push({ from: name, to: newName })
+        }
+    }
+
+    if (moves.length === 0) {
+        console.log("No files to rename.");
+        process.exit(0);
+    }
+
+    await promptOrExit(moves.length + " files will be renamed. Continue?");
+
+    doReplace(moves);
+
+    console.log(chalk.green("Done"));
+
+    rl.close();
+}
+
+/**
+ * @param {string} question
+ */
+async function promptOrExit(question) {
+    if (!await prompt(question)) {
+        console.log(chalk.gray("Aborting..."));
+        process.exit(1);
+    }
+}
+
+/**
+ * @param {string} question
+ */
+async function prompt(question) {
+    return new Promise((resolve) => {
+        rl.question(chalk.bold(question) + ` [${chalk.green('y')}|${chalk.red('n')}]\n> `, (answer) => {
+            console.log(`Answer: '${answer}'`);
+            if (answer === "y") {
+                resolve(true);
+            } else {
+                resolve(false);
+            }
+        });
+    });
+}
+
+/**
+ * @param {{ from: string, to: string }[]} moves
+ */
+function doReplace(moves) {
+    for (const move of moves) {
+        fs.renameSync(move.from, move.to);
+    }
+}
+
+/**
+ * @param {string} dir
+ */
+function * scan(dir) {
+    for (const file of ls(dir)) {
+        const stat = fs.statSync(file);
+        if (stat.isDirectory()) {
+            yield * scan(file);
+        } else {
+            yield file;
+        }
+    }
+}
+
+/**
+ * @param {string} dir
+ */
+function ls(dir) {
+    return fs.readdirSync(dir)
+        .filter(file => {
+            return ![".lock", ".png", ".svg", ".editorconfig", ".git"].includes(path.extname(file))
+                && ![".git", ".editorconfig", "target", "node_modules", ".yarn", "package.json"].some(name => file === name)
+        })
+        .map(file => path.resolve(dir, file));
+}
+
+/**
+ * @param {string} filename
+ * @param {string} newExt
+ */
+function swapExt(filename, newExt) {
+    const oldExt = path.extname(filename);
+    return filename.slice(0, filename.length - oldExt.length) + newExt;
+}
+
+/**
+ * @param {string} source
+ */
+function logJsxIn(source) {
+    const lines = source.split("\n");
+    const jsxLines = new Set();
+    for (let i = 0; i < lines.length; i++) {
+        if (JSX_RE.test(lines[i])) {
+            jsxLines.add(i);
+        }
+    }
+    for (let i = 0; i < lines.length; i++) {
+        if (jsxLines.has(i)) {
+            console.log(String(i+1).padStart(4, " ") + ": " + truncate(lines[i]));
+        }
+    }
+}
+
+/**
+ * @param {string} source
+ */
+function hasOnlyAmbigousJsx(source) {
+    if (!AMBIGOUS_JSX_RE.test(source)) return false;
+    const lines = source.split("\n");
+    for (const line of lines) {
+        if (AMBIGOUS_JSX_RE.test(line)) continue;
+        if (JSX_RE.test(line)) return false;
+    }
+    return true;
+}
+
+/**
+ * @param {string} name
+ * @returns boolean
+ */
+async function hasJsx(name) {
+    const source = fs.readFileSync(name, "utf8");
+    if (!JSX_RE.test(source)) return false;
+    if (hasOnlyAmbigousJsx(source)) {
+        return false;
+    }
+    return true
+}
+
+/**
+ * @param {string} string
+ */
+function truncate(string) {
+    if (string.length > 500) {
+        return string.slice(0, 500) + '...';
+    }
+
+    return string;
+}

@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const crypto = require("crypto");
+const chalk = require("chalk");
+const path = require("path");
+const fs = require("fs");
+
+const excludedFolders = ["node_modules", "target", "postgres-data", ".git"]
+const binaryFileTypes = [".jar", ".gz"]
+
+const hashMap = new Map();
+
+let extname = process.argv[2]
+
+if (process.argv.includes("--help")) {
+    console.error("Usage: repeated-files <extension>");
+    process.exit(1)
+}
+
+if (extname && extname[0] === ".") {
+    extname = extname.slice(1);
+}
+
+scanAllFiles(".")
+    .forEach(file => {
+        if (binaryFileTypes.includes(path.extname(file))) {
+            return;
+        }
+        if (
+            extname &&
+            file.split("/").at(-1) !== extname &&
+                path.extname(file) !== "." + extname
+        ) return;
+        const source = tryRead(file);
+        const hash = sha256(source);
+        if (hashMap.has(hash)) {
+            hashMap.get(hash).add(file);
+        } else {
+            hashMap.set(hash, new Set());
+        }
+    })
+
+for (const [hash, files] of hashMap) {
+    if (files.size > 1) {
+        console.log();
+        console.log(chalk.bold(`Repeated ${files.size} times: ${hash}`));
+        for (const file of files) {
+            console.log(file);
+        }
+    }
+}
+
+function sha256(value) {
+    return crypto.createHash("sha256").update(value).digest("base64");
+}
+
+function scanAllFiles(dir, result = []) {
+    if (excludedFolders.includes(dir.split("/").at(-1))) {
+        return result;
+    }
+
+    const files = fs.readdirSync(dir)
+        .map(file => path.resolve(dir, file));
+
+    for (const file of files) {
+        const stat = fs.statSync(file);
+
+        if (stat.isDirectory()) {
+            scanAllFiles(file, result);
+        } else {
+            result.push(file);
+        }
+    }
+
+    return result;
+}
+
+function tryRead(file) {
+    try {
+        return fs.readFileSync(file, "utf8");
+    } catch(e) {
+        throw Error(chalk.red.bold("Failed to read: " + file))
+    }
+}

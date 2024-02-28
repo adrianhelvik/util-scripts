@@ -1,0 +1,76 @@
+#!/usr/bin/env bun
+
+import express from "express";
+import chalk from "chalk";
+import path from "path";
+import net from "net";
+import fs from "fs";
+
+const app = express();
+
+app.use(async (req, res, next) => {
+    if (!req.path.endsWith("/") && !path.extname(req.path)) {
+        return res.status(307).redirect(req.path + "/");
+    }
+
+    const parts = req.path
+        .split("/")
+        .filter((part) => part !== "" && part !== "." && part !== "..");
+
+    if (!path.extname(parts.at(-1)!)) {
+        parts.push("index.html");
+    }
+
+    const result = path.resolve(process.cwd(), ...parts);
+
+    if (!result.startsWith(process.cwd())) {
+        res.status(403).send("Forbidden");
+        return;
+    }
+
+    if (!fs.existsSync(result)) {
+        next();
+        return;
+    }
+
+    if (result.endsWith(".html")) {
+        res.set("Content-Type", "text/html");
+        fs.createReadStream(result).pipe(res);
+    } else if (result.endsWith(".css")) {
+        res.set("Content-Type", "text/css");
+        fs.createReadStream(result).pipe(res);
+    } else if (result.endsWith(".js")) {
+        res.set("Content-Type", "text/javascript");
+        fs.createReadStream(result).pipe(res);
+    } else if (result.endsWith(".json")) {
+        res.set("Content-Type", "application/json");
+        fs.createReadStream(result).pipe(res);
+    } else {
+        res.sendFile(result);
+    }
+});
+
+let port = 4200;
+const host = "127.0.0.1";
+
+try {
+    app.listen(port, host);
+} catch (e) {
+    port = await findAvailablePort();
+    app.listen(port, host);
+}
+
+console.log("Server started on ", chalk.cyan(`http://localhost:${port}`));
+
+function findAvailablePort(): Promise<number> {
+    const server = net.createServer();
+    return new Promise((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, () => {
+            const port = server.address()!.port;
+            server.close(() => {
+                resolve(port);
+            });
+        });
+    });
+}
