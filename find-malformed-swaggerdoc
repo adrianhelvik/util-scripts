@@ -1,0 +1,92 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const readline = require("readline");
+const chalk = require("chalk");
+const path = require("path");
+const Diff = require("diff");
+const fs = require("fs");
+
+const files = scan(".")
+
+const LEADING_SPACE_AND_QUOTES_REGEX = /^( +)"""$/
+const LEADING_SPACE_REGEX = /^( +)[^ ]/
+const OPERATION_ANNOTAITON_REGEX = /@Operation/
+
+if (process.argv.includes("-h") || process.argv.includes("--help")) {
+    console.log("Use -l to only print file names");
+    process.exit();
+}
+
+/**
+ * Valid:
+ *     """
+ *     Hello world
+ *     """
+ * Invalid:
+ *     """
+ *         Hello world
+ *     """
+ */
+
+fileLoop: for (const file of files) {
+    if (path.extname(file) !== ".java") {
+        continue;
+    }
+    const lines = fs.readFileSync(file, "utf8")
+        .split("\n");
+
+    let foundOperation = false;
+    for (let i = 0; i < lines.length - 1; i++) {
+        const lineA = lines[i];
+        const lineB = lines[i + 1];
+
+        if (OPERATION_ANNOTAITON_REGEX.test(lineA)) {
+            foundOperation = true;
+        }
+
+        if (!foundOperation) continue;
+
+        const lineAMatch = lineA.match(LEADING_SPACE_AND_QUOTES_REGEX);
+        if (!lineAMatch) continue;
+        const lineBMatch = lineB.match(LEADING_SPACE_REGEX)
+        if (!lineBMatch) continue;
+
+        const lengthA = lineAMatch[1].length;
+        const lengthB = lineBMatch[1].length;
+
+        if (lengthA !== lengthB) {
+            if (process.argv.includes("-l")) {
+                console.log(file);
+                continue fileLoop
+            } else {
+                console.log(chalk.red(file));
+                console.log(lengthA, "≠", lengthB);
+                console.log(lineA);
+                console.log(lineB);
+                console.log();
+            }
+        }
+    }
+}
+
+function* scan(dir) {
+    for (const file of ls(dir)) {
+        const stat = fs.statSync(file);
+        if (stat.isDirectory()) {
+            yield* scan(file);
+        } else {
+            yield file;
+        }
+    }
+}
+
+function ls(dir) {
+    return fs.readdirSync(dir)
+        .filter(file => {
+            return ![".lock", ".png", ".svg", ".editorconfig", ".git"].includes(path.extname(file))
+                && ![".git", ".editorconfig", "target", "node_modules", ".yarn", "dist", "dest"].some(name => file === name)
+        })
+        .map(file => path.resolve(dir, file));
+}

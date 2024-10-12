@@ -10,7 +10,14 @@ const fs = require("fs");
 
 const search = process.argv[2];
 const replacement = process.argv[3];
-const possiblyFileOrExtensions = process.argv[4];
+const restArgs = process.argv.slice(3);
+const possiblyFileOrExtensions = restArgs.find(it => it.startsWith("."));
+const flags = restArgs
+    .filter(it => /-[a-z]+/.test(it))
+    .map(it => it.slice(1))
+    .join("")
+    .split("")
+    .concat("g");
 const possiblyFile = possiblyFileOrExtensions && possiblyFileOrExtensions[0] !== "." ? possiblyFileOrExtensions : null;
 const extensions = possiblyFileOrExtensions && possiblyFileOrExtensions[0] === "." ? possiblyFileOrExtensions.split(",") : null;
 const noQuestion = Boolean(possiblyFile);
@@ -28,7 +35,9 @@ if (!search || replacement == null) {
 let changed = 0;
 const updates = new Map();
 
-const regex = new RegExp(search, 'g');
+const regex = new RegExp(search, "g");
+
+console.log("regex:", regex);
 
 console.log(regex);
 
@@ -108,7 +117,7 @@ function ls(dir) {
     return fs.readdirSync(dir)
         .filter(file => {
             return ![".lock", ".png", ".svg", ".editorconfig", ".git"].includes(path.extname(file))
-                && ![".git", ".editorconfig", "target", "node_modules", ".yarn", "package.json", "dist", "dest"].some(name => file === name)
+                && ![".git", ".editorconfig", "target", "node_modules", ".yarn", "dist", "dest"].some(name => file === name)
         })
         .map(file => path.resolve(dir, file));
 }
